@@ -47,6 +47,10 @@ IMG_PART_SIGNATURE:=$(shell echo $(SOURCE_DATE_EPOCH)$(LINUX_VERMAGIC) | $(MKHAS
 IMG_PART_DISKGUID:=$(shell echo $(SOURCE_DATE_EPOCH)$(LINUX_VERMAGIC) | $(MKHASH) md5 | sed -E 's/(.{8})(.{4})(.{4})(.{4})(.{10})../\1-\2-\3-\4-\500/')
 endif
 
+EXT4_UUID_NAMESPACE:=e67fcece-4ba7-4341-a2ed-d366699c745b
+EXT4_ROOTFS_UUID:=$(shell /usr/bin/uuidgen --sha1 -n $(EXT4_UUID_NAMESPACE) -N rootfs-uuid-$(SOURCE_DATE_EPOCH))
+EXT4_ROOTFS_HASH_SEED:=$(shell /usr/bin/uuidgen --sha1 -n $(EXT4_UUID_NAMESPACE) -N rootfs-hash-seed-$(SOURCE_DATE_EPOCH))
+
 MKFS_DEVTABLE_OPT := -D $(INCLUDE_DIR)/device_table.txt
 
 ifneq ($(CONFIG_BIG_ENDIAN),)
@@ -268,12 +272,14 @@ define Image/mkfs/ubifs
 endef
 
 define Image/mkfs/ext4
-	$(STAGING_DIR_HOST)/bin/make_ext4fs -L rootfs \
-		-l $(ROOTFS_PARTSIZE) -b $(CONFIG_TARGET_EXT4_BLOCKSIZE) \
+	$(if $(SOURCE_DATE_EPOCH),E2FSPROGS_FAKE_TIME=$(SOURCE_DATE_EPOCH)) \
+		$(STAGING_DIR_HOST)/bin/mkfs.ext4 -L rootfs \
+		-T default -b $(CONFIG_TARGET_EXT4_BLOCKSIZE) \
 		$(if $(CONFIG_TARGET_EXT4_RESERVED_PCT),-m $(CONFIG_TARGET_EXT4_RESERVED_PCT)) \
-		$(if $(CONFIG_TARGET_EXT4_JOURNAL),,-J) \
-		$(if $(SOURCE_DATE_EPOCH),-T $(SOURCE_DATE_EPOCH)) \
-		$@ $(call mkfs_target_dir,$(1))/
+		$(if $(CONFIG_TARGET_EXT4_JOURNAL),,-O ^has_journal) \
+		-U $(EXT4_ROOTFS_UUID) -E hash_seed=$(EXT4_ROOTFS_HASH_SEED) \
+		-d $(call mkfs_target_dir,$(1))/ \
+		$@ $$(($(ROOTFS_PARTSIZE)/$(CONFIG_TARGET_EXT4_BLOCKSIZE)))
 endef
 
 define Image/Manifest
