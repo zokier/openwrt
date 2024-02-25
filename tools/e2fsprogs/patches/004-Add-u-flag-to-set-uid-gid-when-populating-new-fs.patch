@@ -1,0 +1,192 @@
+From 76c6186e7ea6b5ab11348b50236635812e85d39e Mon Sep 17 00:00:00 2001
+From: Torste Aikio <zokier@gmail.com>
+Date: Sun, 25 Feb 2024 16:29:59 +0200
+Subject: [PATCH] Add -u flag to set uid:gid when populating new fs
+
+This flag is useful when making root fs without root privileges
+
+Heavily inspired by patch from David Timber <dxdt@dev.snart.me>
+---
+ misc/create_inode.c | 12 ++++++++--
+ misc/create_inode.h |  3 +++
+ misc/mke2fs.c       | 54 ++++++++++++++++++++++++++++++++++++++++-----
+ 3 files changed, 62 insertions(+), 7 deletions(-)
+
+diff --git a/misc/create_inode.c b/misc/create_inode.c
+index a3a34cd9..0005fc02 100644
+--- a/misc/create_inode.c
++++ b/misc/create_inode.c
+@@ -109,7 +109,7 @@ static errcode_t add_link(ext2_filsys fs, ext2_ino_t parent_ino,
+ 
+ /* Set the uid, gid, mode and time for the inode */
+ static errcode_t set_inode_extra(ext2_filsys fs, ext2_ino_t ino,
+-				 struct stat *st)
++				 struct stat *st, struct fs_ops_callbacks *fs_callbacks)
+ {
+ 	errcode_t		retval;
+ 	struct ext2_inode	inode;
+@@ -129,6 +129,14 @@ static errcode_t set_inode_extra(ext2_filsys fs, ext2_ino_t ino,
+ 	inode.i_mtime = st->st_mtime;
+ 	inode.i_ctime = st->st_ctime;
+ 
++	if (fs_callbacks && fs_callbacks->before_inode_extra_write) {
++		retval = fs_callbacks->before_inode_extra_write(fs, ino, st, &inode);
++		if (retval) {
++			com_err(__func__, retval, _("callback error while writing inode %u"), ino);
++			return retval;
++		}
++	}
++
+ 	retval = ext2fs_write_inode(fs, ino, &inode);
+ 	if (retval)
+ 		com_err(__func__, retval, _("while writing inode %u"), ino);
+@@ -986,7 +994,7 @@ find_lnf:
+ 			goto out;
+ 		}
+ 
+-		retval = set_inode_extra(fs, ino, &st);
++		retval = set_inode_extra(fs, ino, &st, fs_callbacks);
+ 		if (retval) {
+ 			com_err(__func__, retval,
+ 				_("while setting inode for \"%s\""), name);
+diff --git a/misc/create_inode.h b/misc/create_inode.h
+index b5eeb420..6f31fcfb 100644
+--- a/misc/create_inode.h
++++ b/misc/create_inode.h
+@@ -1,6 +1,7 @@
+ #ifndef _CREATE_INODE_H
+ #define _CREATE_INODE_H
+ 
++#include <ext2fs/ext2_fs.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
+@@ -31,6 +32,8 @@ struct fs_ops_callbacks {
+ 	errcode_t (* end_create_new_inode)(ext2_filsys fs,
+ 		const char *target_path, const char *name,
+ 		ext2_ino_t parent_ino, ext2_ino_t root, mode_t mode);
++	errcode_t (* before_inode_extra_write)(ext2_filsys fs, ext2_ino_t ino,
++				 struct stat *st, struct ext2_inode *inode);
+ };
+ 
+ extern int no_copy_xattrs; 	/* this should eventually be a flag
+diff --git a/misc/mke2fs.c b/misc/mke2fs.c
+index 4a9c1b09..bdf6a2ee 100644
+--- a/misc/mke2fs.c
++++ b/misc/mke2fs.c
+@@ -16,6 +16,7 @@
+  * enforced (but it's not much fun on a character device :-).
+  */
+ 
++#include <stdint.h>
+ #define _XOPEN_SOURCE 600
+ 
+ #include "config.h"
+@@ -119,6 +120,8 @@ static int sync_kludge;	/* Set using the MKE2FS_SYNC env. option */
+ char **fs_types;
+ const char *src_root_dir;  /* Copy files from the specified directory */
+ static char *undo_file;
++static uid_t populate_uid = -1;
++static gid_t populate_gid = -1;
+ 
+ static int android_sparse_file; /* -E android_sparse */
+ 
+@@ -139,8 +142,8 @@ static void usage(void)
+ 	"\t[-g blocks-per-group] [-L volume-label] "
+ 	"[-M last-mounted-directory]\n\t[-O feature[,...]] "
+ 	"[-r fs-revision] [-E extended-option[,...]]\n"
+-	"\t[-t fs-type] [-T usage-type ] [-U UUID] [-e errors_behavior]"
+-	"[-z undo_file]\n"
++	"\t[-t fs-type] [-T usage-type ] [-u uid[:gid]] [-U UUID]\n"
++	"\t[-e errors_behavior] [-z undo_file]\n"
+ 	"\t[-jnqvDFSV] device [blocks-count]\n"),
+ 		program_name);
+ 	exit(1);
+@@ -1604,6 +1607,7 @@ static void PRS(int argc, char *argv[])
+ 	int		use_bsize;
+ 	char		*newpath;
+ 	int		pathlen = sizeof(PATH_SET) + 1;
++	long		u_opt = -1;
+ #ifdef HAVE_BLKID_PROBE_GET_TOPOLOGY
+ 	struct device_param dev_param;
+ #endif
+@@ -1678,7 +1682,7 @@ profile_error:
+ 	}
+ 
+ 	while ((c = getopt (argc, argv,
+-		    "b:cd:e:g:i:jl:m:no:qr:s:t:vC:DE:FG:I:J:KL:M:N:O:R:ST:U:Vz:")) != EOF) {
++		    "b:cd:e:g:i:jl:m:no:qr:s:t:u:vC:DE:FG:I:J:KL:M:N:O:R:ST:U:Vz:")) != EOF) {
+ 		switch (c) {
+ 		case 'b':
+ 			blocksize = parse_num_blocks2(optarg, -1);
+@@ -1910,6 +1914,28 @@ profile_error:
+ 			}
+ 			usage_types = strdup(optarg);
+ 			break;
++		case 'u':
++			errno = 0;
++			u_opt = strtol(optarg, &tmp, 10);
++			if (errno != 0 || u_opt < -1 || u_opt > UINT32_MAX) {
++				com_err(program_name, 0, _("invalid uid %s"), optarg);
++				exit(1);
++			}
++			populate_uid = u_opt;
++			if (*tmp == ':') {
++				tmp++;
++				u_opt = strtol(tmp, &tmp, 10);
++				if (errno != 0 || u_opt < -1 || u_opt > UINT32_MAX) {
++					com_err(program_name, 0, _("invalid gid %s"), optarg);
++					exit(1);
++				}
++				populate_gid = u_opt;
++			}
++			if (*tmp != 0) {
++				com_err(program_name, 0, _("invalid uid[:gid] %s"), optarg);
++				exit(1);
++			}
++			break;
+ 		case 'U':
+ 			fs_uuid = optarg;
+ 			break;
+@@ -3012,6 +3038,21 @@ try_user:
+ 	return 0;
+ }
+ 
++static errcode_t cb_populate_set_uidgid(ext2_filsys fs, ext2_ino_t ino,
++				 struct stat *st, struct ext2_inode *inode)
++{
++	if (populate_uid < UINT32_MAX) {
++		inode->i_uid = populate_uid;
++		ext2fs_set_i_uid_high(*inode, populate_uid >> 16);
++	}
++	if (populate_gid < UINT32_MAX) {
++		inode->i_gid = populate_gid;
++		ext2fs_set_i_gid_high(*inode, populate_gid >> 16);
++	}
++
++	return 0;
++}
++
+ int main (int argc, char *argv[])
+ {
+ 	errcode_t	retval = 0;
+@@ -3553,11 +3594,14 @@ no_journal:
+ 		com_err(program_name, retval, "while creating huge files");
+ 	/* Copy files from the specified directory */
+ 	if (src_root_dir) {
++		struct fs_ops_callbacks fs_ops_callbacks = {0};
++		fs_ops_callbacks.before_inode_extra_write = cb_populate_set_uidgid;
++
+ 		if (!quiet)
+ 			printf("%s", _("Copying files into the device: "));
+ 
+-		retval = populate_fs(fs, EXT2_ROOT_INO, src_root_dir,
+-				     EXT2_ROOT_INO);
++		retval = populate_fs2(fs, EXT2_ROOT_INO, src_root_dir,
++				     EXT2_ROOT_INO, &fs_ops_callbacks);
+ 		if (retval) {
+ 			com_err(program_name, retval, "%s",
+ 				_("while populating file system"));
+-- 
+2.43.2
+

@@ -278,6 +278,7 @@ define Image/mkfs/ext4
 		$(if $(CONFIG_TARGET_EXT4_RESERVED_PCT),-m $(CONFIG_TARGET_EXT4_RESERVED_PCT)) \
 		$(if $(CONFIG_TARGET_EXT4_JOURNAL),,-O ^has_journal) \
 		-U $(EXT4_ROOTFS_UUID) -E hash_seed=$(EXT4_ROOTFS_HASH_SEED) \
+		-u 0:0 \
 		-d $(call mkfs_target_dir,$(1))/ \
 		$@ $$(($(ROOTFS_PARTSIZE)/$(CONFIG_TARGET_EXT4_BLOCKSIZE)))
 endef
