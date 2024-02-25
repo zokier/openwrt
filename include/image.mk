@@ -48,8 +48,8 @@ IMG_PART_DISKGUID:=$(shell echo $(SOURCE_DATE_EPOCH)$(LINUX_VERMAGIC) | $(MKHASH
 endif
 
 EXT4_UUID_NAMESPACE:=e67fcece-4ba7-4341-a2ed-d366699c745b
-EXT4_ROOTFS_UUID:=$(shell /usr/bin/uuidgen --sha1 -n $(EXT4_UUID_NAMESPACE) -N rootfs-uuid-$(SOURCE_DATE_EPOCH))
-EXT4_ROOTFS_HASH_SEED:=$(shell /usr/bin/uuidgen --sha1 -n $(EXT4_UUID_NAMESPACE) -N rootfs-hash-seed-$(SOURCE_DATE_EPOCH))
+EXT4_ROOTFS_UUID:=$(shell uuidgen -s -n $(EXT4_UUID_NAMESPACE) -N rootfs-uuid-$(SOURCE_DATE_EPOCH))
+EXT4_ROOTFS_HASH_SEED:=$(shell uuidgen -s -n $(EXT4_UUID_NAMESPACE) -N rootfs-hash-seed-$(SOURCE_DATE_EPOCH))
 
 MKFS_DEVTABLE_OPT := -D $(INCLUDE_DIR)/device_table.txt
 

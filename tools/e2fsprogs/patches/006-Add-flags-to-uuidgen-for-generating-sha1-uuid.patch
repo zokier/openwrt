@@ -1,0 +1,98 @@
+From a181b1aa2ef0641da23b8267b0b9e499d740e1c4 Mon Sep 17 00:00:00 2001
+From: Torste Aikio <zokier@gmail.com>
+Date: Sun, 25 Feb 2024 21:12:45 +0200
+Subject: [PATCH] Add flags to uuidgen for generating sha1 uuid
+
+---
+ misc/uuidgen.c | 33 +++++++++++++++++++++++++++++++--
+ 1 file changed, 31 insertions(+), 2 deletions(-)
+
+diff --git a/misc/uuidgen.c b/misc/uuidgen.c
+index 1233f3df..d48bd02e 100644
+--- a/misc/uuidgen.c
++++ b/misc/uuidgen.c
+@@ -11,6 +11,7 @@
+ 
+ #include "config.h"
+ #include <stdio.h>
++#include <string.h>
+ #ifdef HAVE_STDLIB_H
+ #include <stdlib.h>
+ #endif
+@@ -26,10 +27,11 @@ extern int optind;
+ 
+ #define DO_TYPE_TIME	1
+ #define DO_TYPE_RANDOM	2
++#define DO_TYPE_SHA1 3
+ 
+ static void usage(const char *progname)
+ {
+-	fprintf(stderr, _("Usage: %s [-r] [-t]\n"), progname);
++	fprintf(stderr, _("Usage: %s [-r] [-t] [-s] [-n ns] [-N name]\n"), progname);
+ 	exit(1);
+ }
+ 
+@@ -39,6 +41,8 @@ main (int argc, char *argv[])
+ 	int    c;
+ 	int    do_type = 0;
+ 	char   str[37];
++	uuid_t ns = {0};
++	char *sha1_name = 0;
+ 	uuid_t uu;
+ 
+ #ifdef ENABLE_NLS
+@@ -48,18 +52,40 @@ main (int argc, char *argv[])
+ 	textdomain(NLS_CAT_NAME);
+ #endif
+ 
+-	while ((c = getopt (argc, argv, "tr")) != EOF)
++	while ((c = getopt (argc, argv, "trsn:N:")) != EOF)
+ 		switch (c) {
+ 		case 't':
++			if (do_type != 0) usage(argv[0]);
+ 			do_type = DO_TYPE_TIME;
+ 			break;
+ 		case 'r':
++			if (do_type != 0) usage(argv[0]);
+ 			do_type = DO_TYPE_RANDOM;
+ 			break;
++		case 's':
++			if (do_type != 0) usage(argv[0]);
++			do_type = DO_TYPE_SHA1;
++			break;
++		case 'n':
++			if (uuid_parse(optarg, ns) != 0) usage(argv[0]);
++			break;
++		case 'N':
++			sha1_name = strdupa(optarg);
++			break;
+ 		default:
+ 			usage(argv[0]);
+ 		}
+ 
++	if (do_type == DO_TYPE_SHA1) {
++		if (uuid_is_null(ns) || sha1_name == 0) {
++			usage(argv[0]);
++		}
++	} else {
++		if (!uuid_is_null(ns) || sha1_name != 0) {
++			usage(argv[0]);
++		}
++	}
++
+ 	switch (do_type) {
+ 	case DO_TYPE_TIME:
+ 		uuid_generate_time(uu);
+@@ -67,6 +93,9 @@ main (int argc, char *argv[])
+ 	case DO_TYPE_RANDOM:
+ 		uuid_generate_random(uu);
+ 		break;
++	case DO_TYPE_SHA1:
++		uuid_generate_sha1(uu, ns, sha1_name, strlen(sha1_name));
++		break;
+ 	default:
+ 		uuid_generate(uu);
+ 		break;
+-- 
+2.43.2
+
